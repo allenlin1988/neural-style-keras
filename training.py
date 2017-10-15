@@ -1,11 +1,13 @@
 import keras.backend as K
 from keras.applications import vgg16
+import pdb
 
 '''
 Module that defines loss functions and other auxiliary functions used when
 training a pastiche model.
 '''
 
+# The network to compute the Gram Matrix
 def gram_matrix(x, norm_by_channels=False):
     '''
     Returns the Gram matrix of the tensor x.
@@ -81,27 +83,50 @@ def get_loss_net(pastiche_net_output, input_tensor=None):
     '''
     loss_net = vgg16.VGG16(weights='imagenet', include_top=False,
                            input_tensor=input_tensor)
+    # pdb.set_trace()
+    # targets_dict stores the output tensor of each layer
     targets_dict = dict([(layer.name, layer.output) for layer in loss_net.layers])
+    # pastiche_net_output is the input to the loss_net. 
     i = pastiche_net_output
     # We need to apply all layers to the output of the style net
     outputs_dict = {}
+    """ For each of the layers, call that layer function on the input tensor. 
+    This creates a computational path from pastiche_net_output to the output 
+    of the VGG network. That's how you get the gradients to train the pastiche 
+    network! 
+    """
     for l in loss_net.layers[1:]: # Ignore the input layer
         i = l(i)
         outputs_dict[l.name] = i
 
+    """
+    loss_net - the VGG network. To compute loss.
+    outputs_dict - vgg network layer name -> pastiche vgg feature tensors
+    targets_dict - vgg network layer name -> vgg network's own output tensors
+    """
     return loss_net, outputs_dict, targets_dict
 
 
 def get_style_losses(outputs_dict, targets_dict, style_layers,
                    norm_by_channels=False):
     '''
-    Returns the style loss for the desired layers
+    Returns the style loss for the desired layers.
+    Inputs: 
+    outputs_dict - vgg features of the pastiche image
+    targets_dict - vgg features of the style image
+    style_layers - the names of the layers envolved in the style loss
+    norm_by_channels - whether the loss should be normalized by number of channels
+    Outputs:
+    a list of tensors that represent style loss for each of the style layer
     '''
     return [style_loss(outputs_dict[l], targets_dict[l],
                       norm_by_channels=norm_by_channels)
             for l in style_layers]
 
 def get_content_losses(outputs_dict, targets_dict, content_layers):
+    """
+    Returns a list of tensors that represent content loss of each content layer
+    """
     return [content_loss(outputs_dict[l], targets_dict[l])
             for l in content_layers]
 

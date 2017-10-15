@@ -4,15 +4,19 @@ Custom Keras layers used on the pastiche model.
 
 import tensorflow as tf
 import keras
-from keras import initializations
+from keras import initializers
 from keras.layers import ZeroPadding2D, Layer, InputSpec
 
 # Extending the ZeroPadding2D layer to do reflection padding instead.
 class ReflectionPadding2D(ZeroPadding2D):
     def call(self, x, mask=None):
+        height_padding = self.padding[0]
+        top_pad, bottom_pad = height_padding
+        width_padding = self.padding[1]
+        left_pad, right_pad = width_padding
         pattern = [[0, 0],
-                   [self.top_pad, self.bottom_pad],
-                   [self.left_pad, self.right_pad],
+                   [top_pad, bottom_pad],
+                   [left_pad, right_pad],
                    [0, 0]]
         return tf.pad(x, pattern, mode='REFLECT')
 
@@ -20,8 +24,8 @@ class ReflectionPadding2D(ZeroPadding2D):
 class InstanceNormalization(Layer):
     def __init__(self, epsilon=1e-5, weights=None,
                  beta_init='zero', gamma_init='one', **kwargs):
-        self.beta_init = initializations.get(beta_init)
-        self.gamma_init = initializations.get(gamma_init)
+        self.beta_init = initializers.get(beta_init)
+        self.gamma_init = initializers.get(gamma_init)
         self.epsilon = epsilon
         super(InstanceNormalization, self).__init__(**kwargs)
 
@@ -30,8 +34,8 @@ class InstanceNormalization(Layer):
         self.input_spec = [InputSpec(shape=input_shape)]
         shape = (1, 1, 1, input_shape[-1])
 
-        self.gamma = self.gamma_init(shape, name='{}_gamma'.format(self.name))
-        self.beta = self.beta_init(shape, name='{}_beta'.format(self.name))
+        self.gamma = self.gamma_init(shape)
+        self.beta = self.beta_init(shape)
         self.trainable_weights = [self.gamma, self.beta]
 
         self.built = True
@@ -62,8 +66,8 @@ class ConditionalInstanceNormalization(InstanceNormalization):
         self.input_spec = [InputSpec(shape=input_shape)]
         shape = (self.nb_classes, 1, 1, input_shape[-1])
 
-        self.gamma = self.gamma_init(shape, name='{}_gamma'.format(self.name))
-        self.beta = self.beta_init(shape, name='{}_beta'.format(self.name))
+        self.gamma = self.gamma_init(shape)
+        self.beta = self.beta_init(shape)
         self.trainable_weights = [self.gamma, self.beta]
 
         self.built = True
@@ -71,11 +75,12 @@ class ConditionalInstanceNormalization(InstanceNormalization):
     def call(self, x, mask=None):
         # Do not regularize batch axis
         reduction_axes = [1, 2]
-
+        
         mean, var = tf.nn.moments(x, reduction_axes,
                                   shift=None, name=None, keep_dims=True)
 
         # Get the appropriate lines of gamma and beta
+        # tf.gather (default axis=0): get self.beta[self.targets,:,:,:]
         beta = tf.gather(self.beta, self.targets)
         gamma = tf.gather(self.gamma, self.targets)
         x_normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, self.epsilon)

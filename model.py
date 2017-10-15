@@ -4,17 +4,17 @@ This module contains functions for building the pastiche model.
 
 import keras
 from keras.models import Model
-from keras.layers import (Convolution2D, Activation, UpSampling2D,
+from keras.layers import (Conv2D, Activation, UpSampling2D,
                           ZeroPadding2D, Input, BatchNormalization,
-                          merge, Lambda)
+                          add, Lambda)
 from layers import (ReflectionPadding2D, InstanceNormalization,
                     ConditionalInstanceNormalization)
-from keras.initializations import normal
+from keras.initializers import random_normal
+import keras.backend as K
 
 # Initialize weights with normal distribution with std 0.01
-def weights_init(shape, name=None, dim_ordering=None):
-    return normal(shape, scale=0.01, name=name)
-
+def weights_init(shape, dtype=None):
+    return K.random_normal(shape, 0, 0.01, dtype=dtype)
 
 def conv(x, n_filters, kernel_size=3, stride=1, relu=True, nb_classes=1, targets=None):
     '''
@@ -24,8 +24,7 @@ def conv(x, n_filters, kernel_size=3, stride=1, relu=True, nb_classes=1, targets
         raise ValueError('Expected odd kernel size.')
     pad = (kernel_size - 1) / 2
     o = ReflectionPadding2D(padding=(pad, pad))(x)
-    o = Convolution2D(n_filters, kernel_size, kernel_size,
-                      subsample=(stride, stride), init=weights_init)(o)
+    o = Conv2D(n_filters, (kernel_size, kernel_size), strides=(stride, stride), kernel_initializer=weights_init)(o)
     # o = BatchNormalization()(o)
     if nb_classes > 1:
         o = ConditionalInstanceNormalization(targets, nb_classes)(o)
@@ -44,7 +43,7 @@ def residual_block(x, n_filters, nb_classes=1, targets=None):
     # Linear activation on second conv
     o = conv(o, n_filters, relu=False, nb_classes=nb_classes, targets=targets)
     # Shortcut connection
-    o = merge([o, x], mode='sum')
+    o = add([o, x])
     return o
 
 
@@ -73,5 +72,10 @@ def pastiche_model(img_size, width_factor=2, nb_classes=1, targets=None):
     o = conv(o, 3, kernel_size=9, relu=False, nb_classes=nb_classes, targets=targets)
     o = Activation('tanh')(o)
     o = Lambda(lambda x: 150*x, name='scaling')(o)
-    pastiche_net = Model(input=x, output=o)
+    pastiche_net = Model(inputs=[x], outputs=[o])
     return pastiche_net
+
+"""
+Study note: 
+ 
+"""

@@ -17,6 +17,7 @@ from keras.optimizers import Adam
 from model import pastiche_model
 from training import get_loss_net, get_content_losses, get_style_losses, tv_loss
 from utils import preprocess_input, config_gpu, save_checkpoint, std_input_list
+import pdb
 
 if __name__ == '__main__':
     def_cl = ['block3_conv3']
@@ -51,9 +52,12 @@ if __name__ == '__main__':
     args.content_weight = std_input_list(args.content_weight, args.nb_classes, 'Content weight')
     args.tv_weight = std_input_list(args.tv_weight, args.nb_classes, 'TV weight')
 
+    # pdb.set_trace()
     config_gpu(args.gpu, args.allow_growth)
 
     print('Creating pastiche model...')
+    # index label [0,1,..., N-1], where N is the number of styles this network 
+    # should handle. The shape (None,) indicates an unknown batch size
     class_targets = K.placeholder(shape=(None,), dtype=tf.int32)
     # The model will be trained with 256 x 256 images of the coco dataset.
     pastiche_net = pastiche_model(256, width_factor=args.width_factor,
@@ -63,12 +67,20 @@ if __name__ == '__main__':
     o = pastiche_net.output
 
     print('Loading loss network...')
+    """
+    loss_net - the VGG network. To compute loss.
+    outputs_dict - vgg network layer name -> pastiche vgg feature tensors
+    content_targets_dict - vgg network layer name -> vgg network's own output tensors
+    """
     loss_net, outputs_dict, content_targets_dict = get_loss_net(pastiche_net.output, input_tensor=pastiche_net.input)
 
     # Placeholder sizes
+    # shapes of the style_layers output. 
     ph_sizes = {k : K.int_shape(content_targets_dict[k])[-1] for k in args.style_layers}
 
     # Our style targets are precomputed and are fed through these placeholders
+    # style image features. They will be computed and feed into some network.
+    # ?? Where are they computed? Where did they go? 
     style_targets_dict = {k : K.placeholder(shape=(None, ph_sizes[k], ph_sizes[k])) for k in args.style_layers}
 
 
@@ -84,8 +96,9 @@ if __name__ == '__main__':
     content_losses = get_content_losses(outputs_dict, content_targets_dict, args.content_layers)
 
     # Use total variation to improve local coherence
+    # variation loss is computed by comparing the shifted version of image to
+    # itself, so it's locally smooth
     total_var_loss = tv_loss(pastiche_net.output)
-
 
     weighted_style_losses = []
     weighted_content_losses = []
@@ -96,6 +109,9 @@ if __name__ == '__main__':
         weighted_loss = K.mean(K.gather(style_weights, class_targets) * loss)
         weighted_style_losses.append(weighted_loss)
         total_loss += weighted_loss
+
+    # pdb.set_trace()
+    # is total_loss a tensor? 
 
     for loss in content_losses:
         weighted_loss = K.mean(K.gather(content_weights, class_targets) * loss)
@@ -109,20 +125,30 @@ if __name__ == '__main__':
     ## Make training function
 
     # Get a list of inputs
+    # learning_phase: true if is training, false if is inference
     inputs = [pastiche_net.input, class_targets] + \
              [style_targets_dict[k] for k in args.style_layers] + \
              [K.learning_phase()]
 
     # Get trainable params
-    params = pastiche_net.trainable_weights
-    constraints = pastiche_net.constraints
+    # It appears that trainable_weights contains things that are consts, 
+    # which is not actually trainable
+    # params = pastiche_net.trainable_weights
+    params = [ts for ts in pastiche_net.trainable_weights if ts.op.type != 'Const']
+    # it appears that pastiche_net does not have any constraints
+    # constraints = pastiche_net.constraints
 
     opt = Adam(lr=args.lr)
-    updates = opt.get_updates(params, constraints, total_loss)
+    pdb.set_trace()
+    # updates = opt.get_updates(params, constraints, total_loss)
+    # Keras interface seems to be changed too
+    updates = opt.get_updates(total_loss, params)
 
     # List of outputs
     outputs = [total_loss] + weighted_content_losses + weighted_style_losses + [weighted_tv_loss]
 
+    # define your own custom training function
+    # training function needs inputs, outputs and updates
     f_train = K.function(inputs, outputs, updates)
 
     X = h5py.File(args.coco_path, 'r')['train2014']['images']
@@ -176,6 +202,15 @@ if __name__ == '__main__':
 
         # Do a step
         start_time2 = time.time()
+        
+        # out[0] is the loss
+        """
+        batch - the first input, a batch of images that goes into pastiche network
+        class_targets - a randomly selected style index
+        batch_targets - The GRAM matrix of VGG features of the style image
+        [1.] - boolean value of training=True
+        """
+        # Call the Keras function on inputs and get outputs
         out = f_train([batch, batch_classes] + batch_targets + [1.])
         stop_time2 = time.time()
         # Log the statistics
